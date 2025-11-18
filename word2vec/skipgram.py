@@ -2,11 +2,7 @@ import torch
 import torch.nn.functional as F
 from math import sqrt
 from collections import Counter
-from data.utils import (
-        read_text, 
-        preprocess_text, 
-        tokenize, 
-        )
+from data.utils import *
 from ngram.implementation import (
         build_ngrams,
         build_ngram_counts_matrix,
@@ -39,6 +35,28 @@ def hierarchical_softmax_loss(H, targets):
         total+= F.binary_cross_entropy_with_logits(s,bits,reduction='sum')
     return total / max(1, H.shape[0])
 
+def read_analogy_validation_set(word_to_idx):
+    val_tokens = read_analogy_test_set(filename='data/lotr-analogy-test-set.txt')
+    processed_val_token_idxs = []
+    processed_val_tokens = []
+    for example in val_tokens:
+        val_token_idxs = list(map(word_to_idx.get,example))
+        if None not in val_token_idxs:
+            processed_val_tokens.append(example)
+            processed_val_token_idxs.append(val_token_idxs)
+    return processed_val_tokens, processed_val_token_idxs
+
+def topk_by_cosine(target_emb, embed_mtx, idx_to_word, k=10):
+    if target_emb.dim() == 1:
+        target_emb = target_emb.unsqueeze(0)
+    sims = F.cosine_similarity(embed_mtx, target_emb, dim=1)
+    top_vals, top_idxs = torch.topk(sims, k)
+    return [(idx_to_word[i.item()], i.item(), v.item()) for v, i in zip(top_vals, top_idxs)]
+
+def compute_analogy(example,embed_mtx):
+    embed_example = embed_mtx[example]
+    return embed_example[0]-embed_example[1]+embed_example[3]
+
 def main():
     text = read_text()
     processed_text = preprocess_text(text)
@@ -50,6 +68,7 @@ def main():
     N = 3
     embed_size = 30
     vocab_size = len(V)
+    val_tokens, val_token_idxs = read_analogy_validation_set(word_to_idx)
     indexed_tokens = list(map(word_to_idx.get,tokens))
     ngrams = build_ngrams(tokens, n=N)
     idx_ngrams = build_ngrams(indexed_tokens, n=N)
@@ -66,7 +85,7 @@ def main():
     b = torch.zeros(vocab_size,requires_grad=True)
     num_iter = 100000
     batch_size = 512
-    num_epochs = 2
+    num_epochs = 200
     expanded_training_data = torch.vmap(torch.cartesian_prod)(X.view(-1,1),y)
     idxs = torch.arange(-max_distance_to_target,max_distance_to_target+1)
     mid = len(idxs)//2
@@ -80,7 +99,15 @@ def main():
             ix = torch.randint(0,X_expanded.shape[0],(batch_size,))
             logits = embed_mtx[X_expanded[ix]]@W+b
             loss = F.cross_entropy(logits,y_expanded[ix])
-            if i%100==0:
+            if i%1000==0:
+                for example in val_token_idxs:
+                    analogy_output = compute_analogy(example, embed_mtx)
+                    expected_output = idx_to_word[example[2]]
+                    closest = topk_by_cosine(analogy_output, embed_mtx, idx_to_word, k=1)
+                    if closest[0]==expected_output:
+                        print(f'WOW we got one right!! {example=}')
+                    else:
+                        print(f"expected {expected_output}, got {closest[0]}")
                 print(f"{loss=}")
             loss.backward()
             step_update([embed_mtx,W,b],lr=0.02)
