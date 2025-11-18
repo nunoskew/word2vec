@@ -68,8 +68,9 @@ def main():
     batch_size = 512
     num_epochs = 2
     expanded_training_data = torch.vmap(torch.cartesian_prod)(X.view(-1,1),y)
-    idxs = torch.arange(1,max_distance_to_target+1)
-    idxs = torch.cat([torch.flip(idxs*-1,dims=(0,)),idxs])
+    idxs = torch.arange(-max_distance_to_target,max_distance_to_target+1)
+    mid = len(idxs)//2
+    idxs = torch.concat([idxs[:mid],idxs[mid+1:]])
     for epoch in range(num_epochs):
         R = torch.randint(1,max_distance_to_target+1,(expanded_training_data.shape[0],))
         bool_idxs = torch.vmap(lambda r:idxs.abs()<=r)(R)
