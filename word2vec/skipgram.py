@@ -84,7 +84,7 @@ def main():
     W = (torch.randn(embed_size,vocab_size)/sqrt(embed_size)).requires_grad_()
     b = torch.zeros(vocab_size,requires_grad=True)
     num_iter = 100000
-    batch_size = 512
+    batch_size = 12
     num_epochs = 200
     expanded_training_data = torch.vmap(torch.cartesian_prod)(X.view(-1,1),y)
     idxs = torch.arange(-max_distance_to_target,max_distance_to_target+1)
@@ -107,7 +107,7 @@ def main():
                     if closest[0]==expected_output:
                         print(f'WOW we got one right!! {example=}')
                     else:
-                        print(f"expected {expected_output}, got {closest[0]}")
+                        print(f"expected {expected_output}, got {closest[0]} in {list(map(idx_to_word.get,example))}")
                 print(f"{loss=}")
             loss.backward()
             step_update([embed_mtx,W,b],lr=0.02)
