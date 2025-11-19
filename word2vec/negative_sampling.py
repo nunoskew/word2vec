@@ -60,8 +60,9 @@ def compute_analogy(example,embed_mtx):
 def sig_loss(y_true,y_pred):
     return -torch.log(torch.sigmoid(y_pred[torch.arange(y_pred.shape[0]),y_true])).mean()
 
-def noise_loss(x_in,sampled_noise):
-    return torch.sum(-torch.log(torch.sigmoid(x_in@(sampled_noise.T))),axis=1).mean()
+def noise_loss(logits,sampled_noise_idxs):
+    noise_logits = logits.gather(dim=1, index=sampled_noise_idxs)
+    return -torch.log(torch.sigmoid(-noise_logits)).sum(dim=1).mean()
 
 def main():
     text = read_text()
@@ -73,7 +74,7 @@ def main():
     idx_to_word = {idx:word for word,idx in word_to_idx.items()}
     N = 3
     k = 10
-    t = 1e-5
+    t = 1e-3
     embed_size = 300
     vocab_size = len(V)
     val_tokens, val_token_idxs = read_analogy_validation_set(word_to_idx)
@@ -94,7 +95,7 @@ def main():
     W = (torch.randn(embed_size,vocab_size)/sqrt(embed_size)).requires_grad_()
     b = torch.zeros(vocab_size,requires_grad=True)
     num_iter = 100000
-    batch_size = 512
+    batch_size = 12
     num_epochs = 200
     expanded_training_data = torch.vmap(torch.cartesian_prod)(X.view(-1,1),y)
     idxs = torch.arange(-max_distance_to_target,max_distance_to_target+1)
@@ -108,9 +109,9 @@ def main():
         for i in range(X_expanded.shape[0]//batch_size):
             ix = torch.randint(0,X_expanded.shape[0],(batch_size,))
             logits = embed_mtx[X_expanded[ix]]@W+b
-            sampled_noise = unigram_probs.multinomial(num_samples=k,replacement=True)
+            sampled_noise = unigram_probs.multinomial(num_samples=(batch_size*k),replacement=True).view(batch_size,k)
             loss = sig_loss(y_true=y_expanded[ix],y_pred=logits)
-            nl = noise_loss(x_in=embed_mtx[X_expanded[ix]],sampled_noise=embed_mtx[sampled_noise])
+            nl = noise_loss(logits=logits,sampled_noise_idxs=sampled_noise)
             loss += nl
             if i%1000==0:
                 for example in val_token_idxs:
@@ -123,5 +124,5 @@ def main():
                         print(f"expected {expected_output}, got {closest[0][0]} in {list(map(idx_to_word.get,example))}. {closest=}")
                 print(f"{loss=}")
             loss.backward()
-            step_update([embed_mtx,W,b],lr=0.1)
+            step_update([embed_mtx,W,b],lr=0.001)
             zero_grad([embed_mtx,W,b])
