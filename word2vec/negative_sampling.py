@@ -57,6 +57,12 @@ def compute_analogy(example,embed_mtx):
     embed_example = embed_mtx[example]
     return embed_example[0]-embed_example[1]+embed_example[3]
 
+def sig_loss(y_true,y_pred):
+    return -torch.log(torch.sigmoid(y_pred[torch.arange(y_pred.shape[0]),y_true])).mean()
+
+def noise_loss(x_in,sampled_noise):
+    return torch.sum(-torch.log(torch.sigmoid(x_in@(sampled_noise.T))),axis=1).mean()
+
 def main():
     text = read_text()
     processed_text = preprocess_text(text)
@@ -66,22 +72,26 @@ def main():
     word_to_idx = {word:idx for idx,word in enumerate(V)}
     idx_to_word = {idx:word for word,idx in word_to_idx.items()}
     N = 3
-    embed_size = 30
+    k = 10
+    t = 1e-5
+    embed_size = 300
     vocab_size = len(V)
     val_tokens, val_token_idxs = read_analogy_validation_set(word_to_idx)
     indexed_tokens = list(map(word_to_idx.get,tokens))
-    ngrams = build_ngrams(tokens, n=N)
-    idx_ngrams = build_ngrams(indexed_tokens, n=N)
-    average_log_likelihood = compute_ngram_average_log_likelihood(ngrams)
-    nll = compute_ngram_nll(average_log_likelihood)
-    perplexity = compute_ngram_perplexity(average_log_likelihood)
+    freqs = Counter(indexed_tokens)
+    freqs = torch.tensor([freqs[i] for i in range(vocab_size)],dtype=float)
+    unigram_probs = freqs/freqs.sum()
+    p = (1-torch.sqrt(t/unigram_probs)).clip(0)
+    mask = ~p[indexed_tokens].bernoulli().bool()
+    indexed_tokens = torch.tensor(indexed_tokens)
+    masked_tokens = torch.tensor(indexed_tokens[mask])
     max_distance_to_target = 5
     num_tokens_per_instance = 2*max_distance_to_target+1
-    training_data = build_ngrams(indexed_tokens, n=num_tokens_per_instance)
+    training_data = build_ngrams(masked_tokens, n=num_tokens_per_instance)
     X = torch.tensor([instance[max_distance_to_target] for instance in training_data])
     y = torch.tensor([instance[:max_distance_to_target]+instance[(max_distance_to_target+1):] for instance in training_data])
-    embed_mtx = (torch.randn(vocab_size,embed_size)/sqrt(embed_size)).requires_grad_()
-    W = (torch.randn(embed_size,vocab_size)/sqrt(vocab_size)).requires_grad_()
+    embed_mtx = (torch.randn(vocab_size,embed_size)/sqrt(vocab_size)).requires_grad_()
+    W = (torch.randn(embed_size,vocab_size)/sqrt(embed_size)).requires_grad_()
     b = torch.zeros(vocab_size,requires_grad=True)
     num_iter = 100000
     batch_size = 512
@@ -98,17 +108,20 @@ def main():
         for i in range(X_expanded.shape[0]//batch_size):
             ix = torch.randint(0,X_expanded.shape[0],(batch_size,))
             logits = embed_mtx[X_expanded[ix]]@W+b
-            loss = F.cross_entropy(logits,y_expanded[ix])
+            sampled_noise = unigram_probs.multinomial(num_samples=k,replacement=True)
+            loss = sig_loss(y_true=y_expanded[ix],y_pred=logits)
+            nl = noise_loss(x_in=embed_mtx[X_expanded[ix]],sampled_noise=embed_mtx[sampled_noise])
+            loss += nl
             if i%1000==0:
                 for example in val_token_idxs:
                     analogy_output = compute_analogy(example, embed_mtx)
                     expected_output = idx_to_word[example[2]]
-                    closest = topk_by_cosine(analogy_output, embed_mtx, idx_to_word, k=1)
-                    if closest[0]==expected_output:
+                    closest = topk_by_cosine(analogy_output, embed_mtx, idx_to_word, k=5)
+                    if closest[0][0]==expected_output:
                         print(f'WOW we got one right!! {example=}')
                     else:
-                        print(f"expected {expected_output}, got {closest[0]} in {list(map(idx_to_word.get,example))}")
+                        print(f"expected {expected_output}, got {closest[0][0]} in {list(map(idx_to_word.get,example))}. {closest=}")
                 print(f"{loss=}")
             loss.backward()
-            step_update([embed_mtx,W,b],lr=0.02)
+            step_update([embed_mtx,W,b],lr=0.1)
             zero_grad([embed_mtx,W,b])
