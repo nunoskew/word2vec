@@ -48,14 +48,17 @@ def read_analogy_validation_set(word_to_idx):
 
 def normalize(x):
     eps = 1e-5
-    return (x+eps)/(x.norm()+eps)
+    return (x+eps)/(x.norm(dim=-1,keepdim=True)+eps)
 
-def topk_by_cosine(target_emb, embed_mtx, idx_to_word, k=10):
-    if target_emb.dim() == 1:
-        target_emb = target_emb.unsqueeze(0)
-    sims = F.cosine_similarity(embed_mtx, target_emb, dim=1)
-    top_vals, top_idxs = torch.topk(sims, k)
-    return [(idx_to_word[i.item()], i.item(), v.item()) for v, i in zip(top_vals, top_idxs)]
+def topk_by_cosine(vec, embed_mtx, idx_to_word, k=10):
+    scores = vec @ embed_mtx.T  
+    values, indices = torch.topk(scores, k)
+
+    values = values.detach().cpu()
+    indices = indices.detach().cpu()
+
+    return [(idx_to_word[int(i)], float(values[j]))
+            for j, i in enumerate(indices)]
 
 def compute_analogy(example,embed_mtx):
     embed_example = embed_mtx[example]
@@ -69,6 +72,12 @@ def noise_loss(logits,sampled_noise_idxs):
     return -torch.log(torch.sigmoid(-noise_logits)).sum(dim=1).mean()
 
 def main():
+    if torch.cuda.is_available():
+        device = torch.device("cuda")
+    elif torch.backends.mps.is_available():
+        device = torch.device("mps")
+    else:
+        device = torch.device("cpu") 
     text = read_text()
     processed_text = preprocess_text(text)
     tokens = tokenize(processed_text)
@@ -93,27 +102,29 @@ def main():
     max_distance_to_target = 5
     num_tokens_per_instance = 2*max_distance_to_target+1
     training_data = build_ngrams(masked_tokens, n=num_tokens_per_instance)
-    X = torch.tensor([instance[max_distance_to_target] for instance in training_data])
-    y = torch.tensor([instance[:max_distance_to_target]+instance[(max_distance_to_target+1):] for instance in training_data])
-    embed_mtx = (torch.randn(vocab_size,embed_size)/sqrt(vocab_size)).requires_grad_()
-    W = (torch.randn(embed_size,vocab_size)/sqrt(embed_size)).requires_grad_()
-    b = torch.zeros(vocab_size,requires_grad=True)
+    X = torch.tensor([instance[max_distance_to_target] for instance in training_data],device=device)
+    y = torch.tensor([instance[:max_distance_to_target]+instance[(max_distance_to_target+1):] for instance in training_data],device=device)
+    embed_mtx = (torch.randn(vocab_size,embed_size,device=device))/sqrt(vocab_size)
+    embed_mtx.requires_grad_()
+    W = (torch.randn(embed_size,vocab_size,device=device))/sqrt(embed_size)
+    W.requires_grad_()
+    b = torch.zeros(vocab_size,device=device,requires_grad=True)
     num_iter = 100000
     batch_size = 4096
     num_epochs = 200
-    expanded_training_data = torch.vmap(torch.cartesian_prod)(X.view(-1,1),y)
-    idxs = torch.arange(-max_distance_to_target,max_distance_to_target+1)
+    expanded_training_data = torch.vmap(torch.cartesian_prod)(X.view(-1,1),y).to(device)
+    idxs = torch.arange(-max_distance_to_target,max_distance_to_target+1,device=device)
     mid = len(idxs)//2
     idxs = torch.concat([idxs[:mid],idxs[mid+1:]])
     for epoch in range(num_epochs):
-        R = torch.randint(1,max_distance_to_target+1,(expanded_training_data.shape[0],))
+        R = torch.randint(1,max_distance_to_target+1,(expanded_training_data.shape[0],),device=device)
         bool_idxs = torch.vmap(lambda r:idxs.abs()<=r)(R)
         sampled_expanded_training_data = expanded_training_data[bool_idxs]
         X_expanded, y_expanded = sampled_expanded_training_data[:,0],sampled_expanded_training_data[:,1]
         for i in range(X_expanded.shape[0]//batch_size):
-            ix = torch.randint(0,X_expanded.shape[0],(batch_size,))
+            ix = torch.randint(0,X_expanded.shape[0],(batch_size,),device=device)
             logits = embed_mtx[X_expanded[ix]]@W+b
-            sampled_noise = unigram_probs.multinomial(num_samples=(batch_size*k),replacement=True).view(batch_size,k)
+            sampled_noise = unigram_probs.multinomial(num_samples=(batch_size*k),replacement=True).view(batch_size,k).to(device)
             loss = sig_loss(y_true=y_expanded[ix],y_pred=logits)
             nl = noise_loss(logits=logits,sampled_noise_idxs=sampled_noise)
             loss += nl
