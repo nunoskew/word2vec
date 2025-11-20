@@ -46,6 +46,10 @@ def read_analogy_validation_set(word_to_idx):
             processed_val_token_idxs.append(val_token_idxs)
     return processed_val_tokens, processed_val_token_idxs
 
+def normalize(x):
+    eps = 1e-5
+    return (x+eps)/(x.norm()+eps)
+
 def topk_by_cosine(target_emb, embed_mtx, idx_to_word, k=10):
     if target_emb.dim() == 1:
         target_emb = target_emb.unsqueeze(0)
@@ -95,7 +99,7 @@ def main():
     W = (torch.randn(embed_size,vocab_size)/sqrt(embed_size)).requires_grad_()
     b = torch.zeros(vocab_size,requires_grad=True)
     num_iter = 100000
-    batch_size = 12
+    batch_size = 4096
     num_epochs = 200
     expanded_training_data = torch.vmap(torch.cartesian_prod)(X.view(-1,1),y)
     idxs = torch.arange(-max_distance_to_target,max_distance_to_target+1)
@@ -117,12 +121,12 @@ def main():
                 for example in val_token_idxs:
                     analogy_output = compute_analogy(example, embed_mtx)
                     expected_output = idx_to_word[example[2]]
-                    closest = topk_by_cosine(analogy_output, embed_mtx, idx_to_word, k=5)
+                    closest = topk_by_cosine(normalize(analogy_output), normalize(embed_mtx), idx_to_word, k=5)
                     if closest[0][0]==expected_output:
                         print(f'WOW we got one right!! {example=}')
                     else:
                         print(f"expected {expected_output}, got {closest[0][0]} in {list(map(idx_to_word.get,example))}. {closest=}")
                 print(f"{loss=}")
             loss.backward()
-            step_update([embed_mtx,W,b],lr=0.001)
+            step_update([embed_mtx,W,b],lr=0.01)
             zero_grad([embed_mtx,W,b])
