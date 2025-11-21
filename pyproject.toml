@@ -13,4 +13,5 @@ dependencies = [
     "ipython (>=9.6.0,<10.0.0)",
     "datasets>=4.4.1",
     "pip>=25.3",
+    "nltk>=3.9.2",
 ]

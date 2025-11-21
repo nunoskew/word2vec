@@ -10,7 +10,9 @@ from ngram.implementation import (
         compute_ngram_nll,
         compute_ngram_perplexity
         )
-
+import nltk
+nltk.download('stopwords')
+stop_words = set(nltk.corpus.stopwords.words("english"))
 def step_update(params,lr=0.1):
     for param in params:
         param.data-=lr*param.grad
@@ -81,6 +83,7 @@ def main():
     text = read_text()
     processed_text = preprocess_text(text)
     tokens = tokenize(processed_text)
+    tokens = [token for token in tokens if token not in stop_words]
     num_tokens = len(tokens)
     V = sorted(set(tokens))
     word_to_idx = {word:idx for idx,word in enumerate(V)}
