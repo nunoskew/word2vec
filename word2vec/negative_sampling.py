@@ -126,9 +126,9 @@ def main():
             loss = loss_pos + loss_neg
             if i%1000==0:
                 for example in val_token_idxs:
-                    analogy_output = compute_analogy(example, embed_mtx)
+                    analogy_output = compute_analogy(example, V_in)
                     expected_output = idx_to_word[example[2]]
-                    closest = topk_by_cosine(normalize(analogy_output), normalize(embed_mtx), idx_to_word, k=5)
+                    closest = topk_by_cosine(normalize(analogy_output), normalize(V_in), idx_to_word, k=5)
                     if closest[0][0]==expected_output:
                         print(f'WOW we got one right!! {example=}')
                     else:
