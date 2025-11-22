@@ -13,6 +13,7 @@ from ngram.implementation import (
 import nltk
 nltk.download('stopwords')
 stop_words = set(nltk.corpus.stopwords.words("english"))
+
 def step_update(params,lr=0.1):
     for param in params:
         param.data-=lr*param.grad
@@ -20,22 +21,6 @@ def step_update(params,lr=0.1):
 def zero_grad(params):
     for param in params:
         param.grad=None
-
-def hierarchical_softmax_loss(H, targets):
-    """
-    this is too hard for me right now.
-
-    path_nodes[w] : list[int] internal node ids on th epath
-    path_bits[w]: list[int] 0/1 decisions aligned with those nodes
-    """
-    total = H.new_zeros(())
-    for i in range(H.shape[0]):
-        w = int(targets[i])
-        nodes = torch.tensor(path_nodes[w], device=H.device)
-        bits = torch.tensor(path_bits[w], device=H.device, dtype=H.dtype)
-        s = (U[nodes] @ H[i])
-        total+= F.binary_cross_entropy_with_logits(s,bits,reduction='sum')
-    return total / max(1, H.shape[0])
 
 def read_analogy_validation_set(word_to_idx):
     val_tokens = read_analogy_test_set(filename='data/lotr-analogy-test-set.txt')
@@ -55,10 +40,8 @@ def normalize(x):
 def topk_by_cosine(vec, embed_mtx, idx_to_word, k=10):
     scores = vec @ embed_mtx.T  
     values, indices = torch.topk(scores, k)
-
     values = values.detach().cpu()
     indices = indices.detach().cpu()
-
     return [(idx_to_word[int(i)], float(values[j]))
             for j, i in enumerate(indices)]
 
@@ -114,11 +97,12 @@ def main():
     b = torch.zeros(vocab_size,device=device,requires_grad=True)
     num_iter = 100000
     batch_size = 4096
-    num_epochs = 200
+    num_epochs = 2000
     expanded_training_data = torch.vmap(torch.cartesian_prod)(X.view(-1,1),y).to(device)
     idxs = torch.arange(-max_distance_to_target,max_distance_to_target+1,device=device)
     mid = len(idxs)//2
     idxs = torch.concat([idxs[:mid],idxs[mid+1:]])
+    optimizer = torch.optim.Adam([embed_mtx,W,b], lr=0.001)
     for epoch in range(num_epochs):
         R = torch.randint(1,max_distance_to_target+1,(expanded_training_data.shape[0],),device=device)
         bool_idxs = torch.vmap(lambda r:idxs.abs()<=r)(R)
@@ -141,6 +125,12 @@ def main():
                     else:
                         print(f"expected {expected_output}, got {closest[0][0]} in {list(map(idx_to_word.get,example))}. {closest=}")
                 print(f"{loss=}")
+            optimizer.zero_grad()
             loss.backward()
-            step_update([embed_mtx,W,b],lr=0.01)
-            zero_grad([embed_mtx,W,b])
+            optimizer.step()
+            # loss.backward()
+            # step_update([embed_mtx,W,b],lr=0.01)
+            # zero_grad([embed_mtx,W,b])
+
+if __name__=="__main__":
+    main()

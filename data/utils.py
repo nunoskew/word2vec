@@ -28,6 +28,7 @@ def preprocess_text(text):
     text = text.replace('\r\n', '\n').replace('\r', '\n')
     text = re.sub(r'\s+', ' ', text).strip()
     text = text.lower()
+    text = re.sub(r'\d+', '<num>', text)
     return text
 
 def tokenize(text):
