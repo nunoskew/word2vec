@@ -90,19 +90,19 @@ def main():
     training_data = build_ngrams(masked_tokens, n=num_tokens_per_instance)
     X = torch.tensor([instance[max_distance_to_target] for instance in training_data],device=device)
     y = torch.tensor([instance[:max_distance_to_target]+instance[(max_distance_to_target+1):] for instance in training_data],device=device)
-    embed_mtx = (torch.randn(vocab_size,embed_size,device=device))/sqrt(vocab_size)
-    embed_mtx.requires_grad_()
-    W = (torch.randn(embed_size,vocab_size,device=device))/sqrt(embed_size)
-    W.requires_grad_()
-    b = torch.zeros(vocab_size,device=device,requires_grad=True)
+    V_in  = torch.randn(vocab_size, embed_size, device=device) / sqrt(vocab_size)
+    V_out = torch.randn(vocab_size, embed_size, device=device) / sqrt(vocab_size)
+
+    V_in.requires_grad_()
+    V_out.requires_grad_()
     num_iter = 100000
-    batch_size = 4096
-    num_epochs = 2000
+    batch_size = 4096*2
+    num_epochs = 4000
     expanded_training_data = torch.vmap(torch.cartesian_prod)(X.view(-1,1),y).to(device)
     idxs = torch.arange(-max_distance_to_target,max_distance_to_target+1,device=device)
     mid = len(idxs)//2
     idxs = torch.concat([idxs[:mid],idxs[mid+1:]])
-    optimizer = torch.optim.Adam([embed_mtx,W,b], lr=0.001)
+    optimizer = torch.optim.Adam([V_in,V_out], lr=0.001)
     for epoch in range(num_epochs):
         R = torch.randint(1,max_distance_to_target+1,(expanded_training_data.shape[0],),device=device)
         bool_idxs = torch.vmap(lambda r:idxs.abs()<=r)(R)
@@ -110,11 +110,20 @@ def main():
         X_expanded, y_expanded = sampled_expanded_training_data[:,0],sampled_expanded_training_data[:,1]
         for i in range(X_expanded.shape[0]//batch_size):
             ix = torch.randint(0,X_expanded.shape[0],(batch_size,),device=device)
-            logits = embed_mtx[X_expanded[ix]]@W+b
+            centers   = X_expanded[ix]        # [B]
+            targets   = y_expanded[ix]        # [B]
             sampled_noise = unigram_probs.multinomial(num_samples=(batch_size*k),replacement=True).view(batch_size,k).to(device)
-            loss = sig_loss(y_true=y_expanded[ix],y_pred=logits)
-            nl = noise_loss(logits=logits,sampled_noise_idxs=sampled_noise)
-            loss += nl
+            negatives = sampled_noise         # [B, K]
+
+            v_c = V_in[centers]               # [B, d]
+            u_o = V_out[targets]              # [B, d]
+            u_k = V_out[negatives]            # [B, K, d]
+
+            pos_scores = (v_c * u_o).sum(-1)            # [B]
+            neg_scores = (v_c.unsqueeze(1) * u_k).sum(-1)  # [B, K]
+            loss_pos = -torch.log(torch.sigmoid(pos_scores)).mean()
+            loss_neg = -torch.log(torch.sigmoid(-neg_scores)).sum(1).mean()
+            loss = loss_pos + loss_neg
             if i%1000==0:
                 for example in val_token_idxs:
                     analogy_output = compute_analogy(example, embed_mtx)
@@ -128,9 +137,6 @@ def main():
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
-            # loss.backward()
-            # step_update([embed_mtx,W,b],lr=0.01)
-            # zero_grad([embed_mtx,W,b])
 
 if __name__=="__main__":
     main()
