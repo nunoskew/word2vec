@@ -35,19 +35,11 @@ def read_analogy_validation_set(word_to_idx):
 
 def normalize(x):
     eps = 1e-5
-    return (x+eps)/(x.norm(dim=-1,keepdim=True)+eps)
+    return (x+eps)/(x.norm(dim=1,keepdim=True)+eps)
 
-def topk_by_cosine(vec, embed_mtx, idx_to_word, k=10):
-    scores = vec @ embed_mtx.T  
-    values, indices = torch.topk(scores, k)
-    values = values.detach().cpu()
-    indices = indices.detach().cpu()
-    return [(idx_to_word[int(i)], float(values[j]))
-            for j, i in enumerate(indices)]
 
-def compute_analogy(example,embed_mtx):
-    embed_example = embed_mtx[example]
-    return embed_example[0]-embed_example[1]+embed_example[3]
+def compute_analogy(embed_examples):
+    return embed_examples[0]-embed_examples[1]+embed_examples[3]
 
 def sig_loss(y_true,y_pred):
     return -torch.log(torch.sigmoid(y_pred[torch.arange(y_pred.shape[0]),y_true])).mean()
@@ -55,6 +47,22 @@ def sig_loss(y_true,y_pred):
 def noise_loss(logits,sampled_noise_idxs):
     noise_logits = logits.gather(dim=1, index=sampled_noise_idxs)
     return -torch.log(torch.sigmoid(-noise_logits)).sum(dim=1).mean()
+
+def topk_by_cosine(vec, embed_mtx, idx_to_word, k=10):
+    if vec.ndim == 1:
+        vec = vec.unsqueeze(0)  # [1, D]
+
+    vec_norm = F.normalize(vec, p=2, dim=-1)           # [1, D]
+    embed_norm = F.normalize(embed_mtx, p=2, dim=1)    # [V, D]
+
+    scores = vec_norm @ embed_norm.T                  # [1, V]
+    scores = scores.squeeze(0)                        # [V]
+
+    values, indices = torch.topk(scores, k)
+    values = values.detach().cpu()
+    indices = indices.detach().cpu()
+
+    return [(idx_to_word[int(i)], float(values[j])) for j, i in enumerate(indices)]
 
 def main():
     if torch.cuda.is_available():
@@ -126,9 +134,10 @@ def main():
             loss = loss_pos + loss_neg
             if i%1000==0:
                 for example in val_token_idxs:
-                    analogy_output = compute_analogy(example, V_in)
+                    analogy_embed_examples = V_in[example]
+                    analogy_output = compute_analogy(analogy_embed_examples)
                     expected_output = idx_to_word[example[2]]
-                    closest = topk_by_cosine(normalize(analogy_output), normalize(V_in), idx_to_word, k=5)
+                    closest = topk_by_cosine(analogy_output, V_in, idx_to_word, k=10)
                     if closest[0][0]==expected_output:
                         print(f'WOW we got one right!! {example=}')
                     else:
