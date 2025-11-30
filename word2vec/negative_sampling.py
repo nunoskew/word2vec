@@ -71,7 +71,7 @@ def main():
         device = torch.device("mps")
     else:
         device = torch.device("cpu") 
-    text = read_text()
+    text = read_text('the_hobbit.txt')
     processed_text = preprocess_text(text)
     tokens = tokenize(processed_text)
     tokens = [token for token in tokens if token not in stop_words]
